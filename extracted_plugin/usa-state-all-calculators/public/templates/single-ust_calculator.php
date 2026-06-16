@@ -748,19 +748,28 @@ if (document.readyState !== "loading") {
                 'calculateComparison'
             ];
             setTimeout(() => {
-                for (const funcName of calcFunctions) {
-                    if (typeof window[funcName] === 'function') {
-                        try {
-                            if (typeof originalCalculate === 'function') {
-                                originalCalculate(true);
-                            } else {
-                                window[funcName](true);
+                // Pre-fill the results from saved inputs, but DON'T scroll the page to them on load.
+                // The calculate functions call window.scrollTo() unconditionally, so we temporarily
+                // neutralize it for the auto-run and restore it right after (manual "Calculate" still scrolls).
+                var _scrollTo = window.scrollTo;
+                window.scrollTo = function(){};
+                try {
+                    for (const funcName of calcFunctions) {
+                        if (typeof window[funcName] === 'function') {
+                            try {
+                                if (typeof originalCalculate === 'function') {
+                                    originalCalculate(true);
+                                } else {
+                                    window[funcName](true);
+                                }
+                            } catch(e) {
+                                console.error("Auto-calculation error:", e);
                             }
-                        } catch(e) {
-                            console.error("Auto-calculation error:", e);
+                            break;
                         }
-                        break;
                     }
+                } finally {
+                    setTimeout(function(){ window.scrollTo = _scrollTo; }, 200);
                 }
             }, 400);
         }
