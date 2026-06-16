@@ -295,12 +295,13 @@ function usc_get_alimony_templates($state_slug) {
 <div id="alimony-scenarios-container" style="margin-top: 24px; display: none;"></div>';
 
     // 2. ALIMONY CALCULATOR JS
-    $data['js'] = 'var USAC_FED_DATA = ' . json_encode(ust_get_federal_tax_years()) . '; var USAC_FED_YEAR = "' . esc_js(usac_get_active_tax_year()) . '";
+    $data['js'] = 'var USAC_FED_DATA = ' . json_encode(ust_get_federal_tax_years()) . '; var USAC_FED_YEAR = "' . esc_js(usac_get_active_tax_year()) . '"; var USAC_STATE_RULES = ' . json_encode(ust_get_income_tax_data()['states']) . ';
 function usacFedActive(){ return USAC_FED_DATA[USAC_FED_YEAR] || USAC_FED_DATA["2026"] || {}; }
 function usacFedKey(filing){ return (filing === "married") ? "married" : (filing === "head" || filing === "hoh") ? "head" : "single"; }
 function usacFedStdDeduction(filing){ var y = usacFedActive(); var k = usacFedKey(filing); return (y.standard_deduction && y.standard_deduction[k]) ? y.standard_deduction[k] : 0; }
 function usacFedSsCap(){ var y = usacFedActive(); return y.ss_wage_base ? y.ss_wage_base : 184500; }
 function usacFedCalc(taxable, filing){ var y = usacFedActive(); var br = (y.brackets && y.brackets[usacFedKey(filing)]) ? y.brackets[usacFedKey(filing)] : []; var tax = 0, prev = 0, marginal = 10; for (var i = 0; i < br.length; i++){ var lim = br[i].limit, rate = br[i].rate; if (taxable > prev){ tax += (Math.min(taxable, lim) - prev) * rate; marginal = Math.round(rate * 100); } if (taxable <= lim) break; prev = lim; } return { tax: tax, marginal: marginal }; }
+function usacStateTax(grossAnnual, filing, slug){ var s = USAC_STATE_RULES[slug]; if (!s || s.type === "none") return 0; var married = (filing === "married"); var ded = s.deduction || 0; if (married) ded *= 2; var taxable = Math.max(0, grossAnnual - ded); if (s.type === "flat") return taxable * (s.flat_rate || 0); if (s.type === "graduated" && s.brackets){ var tax = 0, prev = 0; for (var i = 0; i < s.brackets.length; i++){ var lim = s.brackets[i].limit, rate = s.brackets[i].rate; if (married && lim !== 999999999999) lim *= 2; if (taxable > lim){ tax += (lim - prev) * rate; prev = lim; } else { tax += (taxable - prev) * rate; break; } } return tax; } return 0; }
 var payorPayType = "salary";
 var recipientPayType = "salary";
 var hasChildren = false;
@@ -412,61 +413,9 @@ function estimateMonthlyTaxes(grossAnnual, filingStatus, stateSlug) {
     var taxableFederal = Math.max(0, grossAnnual - standardDeduction);
     var fedTax = usacFedCalc(taxableFederal, filingStatus).tax;
     
-    // 3. STATE INCOME TAX ESTIMATION
-    var stateTax = 0;
-    if (stateSlug === "california") {
-        var caTaxable = Math.max(0, grossAnnual - 5363);
-        var caBrackets = [
-            { limit: 10412, rate: 0.01 },
-            { limit: 24684, rate: 0.02 },
-            { limit: 38959, rate: 0.04 },
-            { limit: 54081, rate: 0.06 },
-            { limit: 68350, rate: 0.08 },
-            { limit: 349137, rate: 0.093 },
-            { limit: Infinity, rate: 0.103 }
-        ];
-        var caPrev = 0;
-        for (var i = 0; i < caBrackets.length; i++) {
-            var limit = caBrackets[i].limit;
-            var rate = caBrackets[i].rate;
-            if (caTaxable > limit) {
-                stateTax += (limit - caPrev) * rate;
-                caPrev = limit;
-            } else {
-                stateTax += (caTaxable - caPrev) * rate;
-                break;
-            }
-        }
-    } else if (stateSlug === "new-york") {
-        var nyTaxable = Math.max(0, grossAnnual - 8000);
-        var nyBrackets = [
-            { limit: 8500, rate: 0.04 },
-            { limit: 11700, rate: 0.045 },
-            { limit: 13900, rate: 0.0525 },
-            { limit: 21400, rate: 0.059 },
-            { limit: 80650, rate: 0.0633 },
-            { limit: 215400, rate: 0.0685 },
-            { limit: Infinity, rate: 0.0965 }
-        ];
-        var nyPrev = 0;
-        for (var i = 0; i < nyBrackets.length; i++) {
-            var limit = nyBrackets[i].limit;
-            var rate = nyBrackets[i].rate;
-            if (nyTaxable > limit) {
-                stateTax += (limit - nyPrev) * rate;
-                nyPrev = limit;
-            } else {
-                stateTax += (nyTaxable - nyPrev) * rate;
-                break;
-            }
-        }
-    } else if (stateSlug === "pennsylvania") {
-        stateTax = grossAnnual * 0.0307;
-    } else if (stateSlug === "texas" || stateSlug === "florida" || stateSlug === "alaska" || stateSlug === "nevada" || stateSlug === "south-dakota" || stateSlug === "washington" || stateSlug === "wyoming" || stateSlug === "tennessee" || stateSlug === "new-hampshire") {
-        stateTax = 0;
-    } else {
-        stateTax = Math.max(0, grossAnnual - 10000) * 0.045;
-    }
+    // 3. STATE INCOME TAX (centralized: uses the SAME admin-editable state data as the
+    //    Income Tax calculator, so figures never drift out of sync between calculators)
+    var stateTax = usacStateTax(grossAnnual, filingStatus, stateSlug);
     
     return (totalFica + fedTax + stateTax) / 12;
 }
@@ -580,7 +529,7 @@ function calculateAlimony(forceShow) {
     // 3. NEW YORK SPOUSAL MAINTENANCE GUIDELINES
     else if (stateSlug === "new-york") {
         modelUsed = "New York Statutory Maintenance Guidelines";
-        var incomeCap = 203000;
+        var incomeCap = 241000;
         var cappedPayorGross = Math.min(payorGross, incomeCap);
         var pCappedMo = cappedPayorGross / 12;
         
@@ -594,7 +543,7 @@ function calculateAlimony(forceShow) {
         }
         
         monthlyAlimony = Math.min(formulaA, formulaB);
-        ruleText = "New York guidelines use a dual-formula system (with/without child support factor) based on a payor income cap of $203,000, taking the lower output of the two calculations.";
+        ruleText = "New York guidelines use a dual-formula system (with/without child support factor) based on a payor income cap of $241,000, taking the lower output of the two calculations.";
         
         if (duration <= 15) {
             alimonyDuration = duration * 0.20;
