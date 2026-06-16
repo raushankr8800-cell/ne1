@@ -737,42 +737,12 @@ if (document.readyState !== "loading") {
             });
         }
 
-        // Auto-calculate on load if we loaded any saved values
-        if (hasLoadedAny) {
-            const calcFunctions = [
-                'calculateTax', 'calculatePropertyTax', 'calculateSalesTax',
-                'calculateFederalTax', 'calculateStateTax', 'calculateRefund',
-                'calculateWithholding', 'calculateBracket', 'calculateEstimatedTax',
-                'calculateCapitalGains', 'calculateSE', 'calculatePayroll',
-                'calculateGenSales', 'calculateGenProp', 'calculateEffectivePropRate',
-                'calculateComparison'
-            ];
-            setTimeout(() => {
-                // Pre-fill the results from saved inputs, but DON'T scroll the page to them on load.
-                // The calculate functions call window.scrollTo() unconditionally, so we temporarily
-                // neutralize it for the auto-run and restore it right after (manual "Calculate" still scrolls).
-                var _scrollTo = window.scrollTo;
-                window.scrollTo = function(){};
-                try {
-                    for (const funcName of calcFunctions) {
-                        if (typeof window[funcName] === 'function') {
-                            try {
-                                if (typeof originalCalculate === 'function') {
-                                    originalCalculate(true);
-                                } else {
-                                    window[funcName](true);
-                                }
-                            } catch(e) {
-                                console.error("Auto-calculation error:", e);
-                            }
-                            break;
-                        }
-                    }
-                } finally {
-                    setTimeout(function(){ window.scrollTo = _scrollTo; }, 200);
-                }
-            }, 400);
-        }
+        // NOTE: We intentionally do NOT auto-calculate on page load.
+        // Saved input values are still restored above (form stays pre-filled),
+        // but the result panel must remain closed until the user clicks "Calculate".
+        // (Previously this block auto-ran the calculator, which opened the results
+        //  panel on load — see income-tax / property-tax pages.)
+        void hasLoadedAny;
     }
 
     if (document.readyState !== "loading") {
